@@ -20,7 +20,7 @@ const progressContainer = document.getElementById("progress-container");
 const progressBar = document.getElementById("progress-bar");
 const progressText = document.getElementById("progress-text");
 
-const CHUNK_SIZE = 40;
+const CHUNK_SIZE = 20;
 
 function formatPrice(value) {
   return new Intl.NumberFormat("ru-BY", {
@@ -133,26 +133,20 @@ function renderProducts() {
   emptyStateEl.style.display = "none";
   productsGrid.style.display = "grid";
 
-  if (filtered.length <= CHUNK_SIZE) {
-    // Small dataset — render immediately
-    progressContainer.style.display = "none";
-    const fragment = document.createDocumentFragment();
-    for (const p of filtered) {
-      fragment.appendChild(createProductCard(p));
-    }
-    productsGrid.appendChild(fragment);
-    return;
-  }
-
-  // Large dataset — render in chunks with progress
+  // Always show progress for datasets
   progressContainer.style.display = "block";
+  progressBar.style.width = "0%";
+  progressText.textContent = `Загрузка ${filtered.length} товаров...`;
+
   let rendered = 0;
 
   function renderNextChunk() {
     const chunk = filtered.slice(rendered, rendered + CHUNK_SIZE);
     const fragment = document.createDocumentFragment();
     for (const p of chunk) {
-      fragment.appendChild(createProductCard(p));
+      const card = createProductCard(p);
+      card.style.animationDelay = `${(rendered % CHUNK_SIZE) * 20}ms`;
+      fragment.appendChild(card);
     }
     productsGrid.appendChild(fragment);
 
@@ -164,14 +158,14 @@ function renderProducts() {
     if (rendered < filtered.length) {
       requestAnimationFrame(renderNextChunk);
     } else {
-      // Hide progress after a short delay
+      progressText.textContent = `Все ${filtered.length} товаров загружены`;
       setTimeout(() => {
         progressContainer.style.display = "none";
-      }, 600);
+      }, 1500);
     }
   }
 
-  renderNextChunk();
+  requestAnimationFrame(renderNextChunk);
 }
 
 function populateCategories() {
