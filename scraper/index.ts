@@ -108,13 +108,13 @@ function extractImageUrl(item: Record<string, unknown>): string {
 function extractProductUrl(item: Record<string, unknown>, id: string): string {
   const url = item.url ?? item.link ?? item.productUrl;
   if (typeof url === "string") {
-    return url.startsWith("http") ? url : `https://goldapple.ru${url}`;
+    return url.startsWith("http") ? url : `https://goldapple.by${url}`;
   }
   const slug = item.slug ?? item.code;
   if (typeof slug === "string") {
-    return `https://goldapple.ru/product/${slug}`;
+    return `https://goldapple.by/product/${slug}`;
   }
-  return `https://goldapple.ru/product/${id}`;
+  return `https://goldapple.by/product/${id}`;
 }
 
 async function scrapeCategory(
@@ -144,7 +144,7 @@ async function scrapeCategory(
   });
 
   try {
-    const url = `https://goldapple.ru/catalogues/${categorySlug}`;
+    const url = `https://goldapple.by/catalogues/${categorySlug}`;
     console.log(`  Opening ${url}...`);
     await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
     await randomDelay(3000, 5000);

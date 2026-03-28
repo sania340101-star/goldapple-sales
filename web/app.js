@@ -16,7 +16,7 @@ const refreshBtn = document.getElementById("refresh-btn");
 function formatPrice(value) {
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
-    currency: "RUB",
+    currency: "BYN",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(value);
@@ -130,16 +130,17 @@ function populateCategories() {
 
 async function loadProducts() {
   try {
-    const resp = await fetch("/api/products");
-    const data = await resp.json();
-    allProducts = data.products || [];
-    updateTimeEl.textContent = data.lastUpdate
-      ? `Обновлено: ${formatDate(data.lastUpdate)}`
+    const resp = await fetch("./data/products.json");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const products = await resp.json();
+    allProducts = Array.isArray(products) ? products : (products.products || []);
+    const lastUpdate = allProducts.length > 0 ? allProducts[0].scrapedAt : null;
+    updateTimeEl.textContent = lastUpdate
+      ? `Обновлено: ${formatDate(lastUpdate)}`
       : "Данные ещё не загружены";
     populateCategories();
     renderProducts();
   } catch (err) {
-    console.error("Failed to load products:", err);
     emptyStateEl.style.display = "block";
     emptyStateEl.querySelector("p").textContent =
       "Ошибка загрузки данных. Попробуйте обновить страницу.";
@@ -148,21 +149,8 @@ async function loadProducts() {
   }
 }
 
-async function triggerRefresh() {
-  refreshBtn.disabled = true;
-  refreshBtn.textContent = "Обновляется...";
-  try {
-    await fetch("/api/scrape", { method: "POST" });
-    updateTimeEl.textContent = "Парсинг запущен, подождите несколько минут...";
-  } catch (err) {
-    console.error("Failed to trigger scrape:", err);
-  }
-  // Re-enable after 30s
-  setTimeout(() => {
-    refreshBtn.disabled = false;
-    refreshBtn.textContent = "Обновить данные";
-    loadProducts();
-  }, 30000);
+function triggerRefresh() {
+  location.reload();
 }
 
 // Event listeners
