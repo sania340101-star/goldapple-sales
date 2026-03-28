@@ -3,20 +3,33 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Скидки Золотого Яблока</title>
-  <link rel="stylesheet" href="/styles.css">
+  <title>Золотое Яблоко — Скидки</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23c8a55c'/><text x='16' y='22' text-anchor='middle' font-size='16' fill='white'>GA</text></svg>">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header>
-    <div class="header-content">
-      <h1>Скидки Золотого Яблока</h1>
-      <div class="status-bar">
-        <span id="update-time">Загрузка...</span>
-        <span id="product-count"></span>
-        <button id="refresh-btn" title="Запустить обновление">Обновить данные</button>
+    <div class="sale-banner">СКИДКИ И АКЦИИ — GOLDAPPLE.BY</div>
+    <div class="header-top">
+      <div class="logo-area">
+        <div class="logo-icon">🍏</div>
+        <h1><span class="gold">Золотое Яблоко</span> — Скидки</h1>
+      </div>
+      <div class="header-right">
+        <span class="update-info" id="update-time">Загрузка...</span>
+        <button id="refresh-btn">Обновить</button>
       </div>
     </div>
   </header>
+
+  <div class="stats-bar">
+    <div class="stats-content">
+      <div class="stat-chip">Всего товаров: <strong id="total-count">—</strong></div>
+      <div class="stat-chip">Показано: <strong id="filtered-count">—</strong></div>
+      <div class="stat-chip">Макс. скидка: <strong class="accent" id="max-discount">—</strong></div>
+      <div class="stat-chip">Категорий: <strong id="category-count">—</strong></div>
+    </div>
+  </div>
 
   <main>
     <section class="filters">
@@ -24,30 +37,38 @@
       <select id="category-filter">
         <option value="">Все категории</option>
       </select>
+      <select id="sort">
+        <option value="discount-desc">По скидке ↓</option>
+        <option value="price-asc">Цена ↑</option>
+        <option value="price-desc">Цена ↓</option>
+        <option value="name-asc">А — Я</option>
+      </select>
       <div class="range-group">
-        <label for="min-discount">Мин. скидка: <span id="discount-value">0</span>%</label>
+        <label>Скидка от <span id="discount-value">0</span>%</label>
         <input type="range" id="min-discount" min="0" max="90" value="0" step="5" />
       </div>
-      <select id="sort">
-        <option value="discount-desc">По скидке (макс.)</option>
-        <option value="price-asc">По цене (мин.)</option>
-        <option value="price-desc">По цене (макс.)</option>
-        <option value="name-asc">По названию</option>
-      </select>
+      <span class="product-count-label" id="product-count"></span>
     </section>
 
     <div id="loading" class="loading">
-      <div class="spinner"></div>
+      <div class="loader-bar"></div>
       <p>Загрузка товаров...</p>
     </div>
 
     <div id="empty-state" class="empty-state" style="display:none;">
-      <p>Товары со скидками не найдены. Попробуйте изменить фильтры или запустить обновление данных.</p>
+      <div class="empty-state-icon">🛍</div>
+      <h3>Товары не найдены</h3>
+      <p>Попробуйте изменить фильтры или вернитесь позже — данные обновляются ежедневно.</p>
     </div>
 
     <section id="products" class="products-grid"></section>
   </main>
 
-  <script src="/app.js"></script>
+  <footer>
+    Данные собраны с <a href="https://goldapple.by" target="_blank" rel="noopener">goldapple.by</a>.
+    Обновление раз в сутки. Только товары со скидками.
+  </footer>
+
+  <script src="app.js"></script>
 </body>
 </html>
