@@ -1,10 +1,6 @@
-import { chromium } from "playwright-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { chromium } from "playwright";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
-
-// Enable stealth mode to bypass bot detection (Group-IB / GIB)
-chromium.use(StealthPlugin());
 
 const DATA_DIR = join(import.meta.dir, "..", "data");
 const OUTPUT_FILE = join(DATA_DIR, "products.json");
@@ -42,20 +38,24 @@ function randomDelay(min: number, max: number): Promise<void> {
   return delay(Math.floor(Math.random() * (max - min + 1)) + min);
 }
 
-/** Wait until the page title no longer contains "checking" */
-async function waitForDeviceCheck(page: any, timeout = 60000): Promise<boolean> {
-  console.log("  Ожидание проверки устройства...");
+/** Wait until the GIB device check completes (title stops saying "checking") */
+async function waitForDeviceCheck(
+  page: any,
+  timeout = 120_000,
+): Promise<boolean> {
+  console.log("  Waiting for device check...");
   const start = Date.now();
 
   try {
+    // Wait for title to change from "checking"
     await page.waitForFunction(
       () => !document.title.toLowerCase().includes("checking"),
       { timeout },
     );
-    console.log(`  Проверка пройдена за ${Date.now() - start}мс`);
+    console.log(`  Device check passed in ${Date.now() - start}ms`);
     return true;
   } catch {
-    console.log(`  Проверка НЕ пройдена за ${timeout}мс`);
+    console.log(`  Device check FAILED after ${timeout}ms`);
     return false;
   }
 }
@@ -111,7 +111,15 @@ async function extractFromDOM(
   now: string,
 ): Promise<Product[]> {
   return page.evaluate(
-    ({ category, now, siteUrl }: { category: string; now: string; siteUrl: string }) => {
+    ({
+      category,
+      now,
+      siteUrl,
+    }: {
+      category: string;
+      now: string;
+      siteUrl: string;
+    }) => {
       const products: any[] = [];
 
       const selectors = [
@@ -151,8 +159,7 @@ async function extractFromDOM(
 
       for (const card of cards) {
         try {
-          const link =
-            card.closest("a") ?? card.querySelector("a") ?? card;
+          const link = card.closest("a") ?? card.querySelector("a") ?? card;
           const href = link.getAttribute("href") ?? "";
 
           const nameEl = card.querySelector(
@@ -257,7 +264,7 @@ async function scrapeCategory(
   const apiProducts: any[] = [];
   const page = await context.newPage();
 
-  // Intercept all API responses with product data
+  // Intercept API responses containing product data
   page.on("response", async (response: any) => {
     const url: string = response.url();
     if (url.includes("/api/") && response.status() === 200) {
@@ -270,7 +277,7 @@ async function scrapeCategory(
           [];
         if (Array.isArray(items) && items.length > 0) {
           console.log(
-            `  [API] Перехвачено ${items.length} товаров от: ${url.substring(0, 120)}`,
+            `  [API] Intercepted ${items.length} products from: ${url.substring(0, 120)}`,
           );
           apiProducts.push(...items);
         }
@@ -280,34 +287,33 @@ async function scrapeCategory(
     }
   });
 
-  console.log(`\nКатегория: ${categoryName} (${categoryPath})...`);
+  console.log(`\nCategory: ${categoryName} (${categoryPath})...`);
 
   try {
     await page.goto(`${SITE_URL}${categoryPath}`, {
       waitUntil: "domcontentloaded",
-      timeout: 60000,
+      timeout: 90_000,
     });
 
-    // Wait for device check
-    const passed = await waitForDeviceCheck(page, 45000);
+    const passed = await waitForDeviceCheck(page, 90_000);
     if (!passed) {
       try {
         await page.screenshot({
           path: join(DATA_DIR, `debug-${categoryName}.png`),
         });
-        console.log("  Скриншот сохранён для отладки");
+        console.log("  Debug screenshot saved");
       } catch {}
       await page.close();
       return [];
     }
 
-    // Wait for content to fully render
-    await delay(5000);
+    // Wait for content to render
+    await delay(8000);
 
     const title = await page.title();
-    console.log(`  Страница: "${title}"`);
+    console.log(`  Page title: "${title}"`);
 
-    // Log what's on the page for debugging
+    // Log page info
     const pageInfo = await page.evaluate(() => {
       const allLinks = document.querySelectorAll("a[href]");
       const productLinks = Array.from(allLinks).filter((a) => {
@@ -315,48 +321,30 @@ async function scrapeCategory(
         return href.includes("/product") || href.includes("/p/");
       });
       const imgs = document.querySelectorAll("img");
-      const classes = new Set<string>();
-      document.querySelectorAll("[class]").forEach((el: Element) => {
-        (el as HTMLElement).className.split(/\s+/).forEach((c: string) => {
-          if (
-            c.toLowerCase().includes("product") ||
-            c.toLowerCase().includes("card") ||
-            c.toLowerCase().includes("price") ||
-            c.toLowerCase().includes("catalog")
-          ) {
-            classes.add(c);
-          }
-        });
-      });
       return {
         productLinks: productLinks.length,
         images: imgs.length,
-        classes: Array.from(classes).slice(0, 30),
         bodyLength: document.body?.textContent?.length ?? 0,
       };
     });
     console.log(
-      `  Найдено: ${pageInfo.productLinks} product links, ${pageInfo.images} images, body: ${pageInfo.bodyLength} chars`,
+      `  Found: ${pageInfo.productLinks} product links, ${pageInfo.images} images, body: ${pageInfo.bodyLength} chars`,
     );
-    if (pageInfo.classes.length > 0) {
-      console.log(`  Классы: ${pageInfo.classes.join(", ")}`);
-    }
 
-    // Scroll to trigger lazy loading
-    for (let i = 0; i < 10; i++) {
+    // Scroll to trigger lazy loading and "load more"
+    for (let i = 0; i < 15; i++) {
       await page.evaluate(() =>
         window.scrollTo(0, document.body.scrollHeight),
       );
       await delay(2000);
 
-      // Try "load more" button
       try {
         const btn = await page.$(
           'button:has-text("Показать ещё"), button:has-text("Загрузить ещё"), [class*="more"], [class*="load-more"], [class*="show-more"]',
         );
         if (btn && (await btn.isVisible())) {
           await btn.click();
-          console.log(`  Нажата кнопка "Показать ещё" (scroll ${i + 1})`);
+          console.log(`  Clicked "Show more" (scroll ${i + 1})`);
           await delay(3000);
         }
       } catch {
@@ -366,7 +354,7 @@ async function scrapeCategory(
 
     // Strategy 1: API data
     if (apiProducts.length > 0) {
-      console.log(`  [API] Всего перехвачено: ${apiProducts.length}`);
+      console.log(`  [API] Total intercepted: ${apiProducts.length}`);
       for (const item of apiProducts) {
         const product = parseApiProduct(item, categoryName, now, seenIds);
         if (product) products.push(product);
@@ -376,9 +364,7 @@ async function scrapeCategory(
     // Strategy 2: DOM extraction (fallback)
     if (products.length === 0) {
       const domProducts = await extractFromDOM(page, categoryName, now);
-      console.log(
-        `  [DOM] Извлечено ${domProducts.length} товаров со скидкой`,
-      );
+      console.log(`  [DOM] Extracted ${domProducts.length} discounted products`);
       for (const p of domProducts) {
         if (!seenIds.has(p.id)) {
           seenIds.add(p.id);
@@ -387,9 +373,9 @@ async function scrapeCategory(
       }
     }
 
-    console.log(`  Итого со скидкой в ${categoryName}: ${products.length}`);
+    console.log(`  Total discounted in ${categoryName}: ${products.length}`);
   } catch (err) {
-    console.error(`  Ошибка в ${categoryName}: ${err}`);
+    console.error(`  Error in ${categoryName}: ${err}`);
   } finally {
     await page.close();
   }
@@ -398,18 +384,24 @@ async function scrapeCategory(
 }
 
 export async function runScraper(): Promise<Product[]> {
-  console.log("=== Парсер скидок Золотого Яблока (goldapple.by) ===");
-  console.log(`Время: ${new Date().toLocaleString("ru-RU")}`);
+  console.log("=== Gold Apple Sales Scraper (goldapple.by) ===");
+  console.log(`Time: ${new Date().toLocaleString("ru-RU")}`);
 
   await mkdir(DATA_DIR, { recursive: true });
 
+  // Use headful mode with xvfb in CI for better anti-detection
+  const isCI = process.env.CI === "true";
+  console.log(`Environment: ${isCI ? "CI (GitHub Actions)" : "Local"}`);
+
   const browser = await chromium.launch({
-    headless: true,
+    headless: !isCI, // headful in CI (with xvfb), headless locally
+    channel: isCI ? "chrome" : undefined, // use real Chrome in CI
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-blink-features=AutomationControlled",
+      "--window-size=1920,1080",
     ],
   });
 
@@ -418,42 +410,69 @@ export async function runScraper(): Promise<Product[]> {
     timezoneId: "Europe/Minsk",
     viewport: { width: 1920, height: 1080 },
     userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     extraHTTPHeaders: {
       "Accept-Language": "ru-BY,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     },
   });
+
+  // Pre-set cookie consent to avoid the cookie banner popup
+  await context.addCookies([
+    {
+      name: "is-accepted-cookies",
+      value: "true",
+      domain: "goldapple.by",
+      path: "/",
+    },
+  ]);
 
   // Block heavy resources to speed up loading
   await context.route(/\.(woff2?|ttf|otf|mp4|webm)$/, (route: any) =>
     route.abort(),
   );
 
-  // CRITICAL: Navigate to homepage first to establish session & pass device check
-  console.log("\nОткрываю главную страницу для установки сессии...");
+  // Override navigator.webdriver to false
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", {
+      get: () => false,
+    });
+    // Remove automation-related properties
+    (window as any).chrome = { runtime: {} };
+    Object.defineProperty(navigator, "plugins", {
+      get: () => [1, 2, 3, 4, 5],
+    });
+    Object.defineProperty(navigator, "languages", {
+      get: () => ["ru-BY", "ru", "en-US", "en"],
+    });
+  });
+
+  // Navigate to homepage first to establish session & pass device check
+  console.log("\nOpening homepage to establish session...");
   const setupPage = await context.newPage();
   await setupPage.goto(SITE_URL, {
     waitUntil: "domcontentloaded",
-    timeout: 60000,
+    timeout: 90_000,
   });
 
-  const homePassed = await waitForDeviceCheck(setupPage, 60000);
+  const homePassed = await waitForDeviceCheck(setupPage, 120_000);
   if (!homePassed) {
-    console.log(
-      "ОШИБКА: Не удалось пройти проверку устройства на главной странице",
-    );
+    console.log("FATAL: Cannot pass device check on homepage");
     try {
       await setupPage.screenshot({ path: join(DATA_DIR, "debug-home.png") });
+      const pageContent = await setupPage.content();
+      await writeFile(
+        join(DATA_DIR, "debug-home.html"),
+        pageContent,
+        "utf-8",
+      );
     } catch {}
     await browser.close();
-
-    // Save empty array so the site doesn't break
     await writeFile(OUTPUT_FILE, "[]", "utf-8");
     return [];
   }
 
   // Let cookies settle
-  await delay(3000);
+  await delay(5000);
   await setupPage.close();
 
   const allProducts: Product[] = [];
@@ -472,9 +491,9 @@ export async function runScraper(): Promise<Product[]> {
       // Save incrementally after each category
       const sorted = [...allProducts].sort((a, b) => b.discount - a.discount);
       await writeFile(OUTPUT_FILE, JSON.stringify(sorted, null, 2), "utf-8");
-      console.log(`  Всего сохранено: ${allProducts.length} товаров`);
+      console.log(`  Total saved: ${allProducts.length} products`);
 
-      await randomDelay(3000, 5000);
+      await randomDelay(5000, 8000);
     }
   } finally {
     await browser.close();
@@ -484,8 +503,8 @@ export async function runScraper(): Promise<Product[]> {
   allProducts.sort((a, b) => b.discount - a.discount);
   await writeFile(OUTPUT_FILE, JSON.stringify(allProducts, null, 2), "utf-8");
 
-  console.log(`\n=== Итого товаров со скидками: ${allProducts.length} ===`);
-  console.log("Готово!");
+  console.log(`\n=== Total discounted products: ${allProducts.length} ===`);
+  console.log("Done!");
 
   return allProducts;
 }

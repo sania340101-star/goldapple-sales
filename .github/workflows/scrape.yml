@@ -2,7 +2,7 @@ name: Scrape & Deploy
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Каждый день в 6:00 UTC (9:00 МСК)
+    - cron: '0 6 * * *'  # Every day at 6:00 UTC (9:00 MSK)
   workflow_dispatch: {}
 
 permissions:
@@ -23,17 +23,38 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Install Playwright Chromium
-        run: bunx playwright install chromium --with-deps
+      - name: Install Chrome and Playwright deps
+        run: |
+          # Install real Google Chrome (not Chromium)
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable xvfb
+          # Also install Playwright system dependencies
+          bunx playwright install-deps chromium
 
-      - name: Run scraper
-        run: bun run scrape
+      - name: Run scraper with virtual display
+        run: |
+          # Use xvfb to provide a virtual display for headful Chrome
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            bun run scrape
         timeout-minutes: 30
+        env:
+          CI: "true"
 
       - name: Copy data to web directory
         run: |
           mkdir -p web/data
           cp data/products.json web/data/products.json
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-debug
+          path: |
+            data/debug-*.png
+            data/debug-*.html
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
