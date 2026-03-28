@@ -6,7 +6,6 @@ const DATA_DIR = join(import.meta.dir, "..", "data");
 const OUTPUT_FILE = join(DATA_DIR, "products.json");
 
 const SITE_URL = "https://goldapple.by";
-const CATALOG_API_PATTERN = /\/front\/api\/catalog\/products/;
 
 interface Product {
   id: string;
@@ -31,7 +30,6 @@ const CATEGORIES: ReadonlyArray<{ name: string; path: string }> = [
   { name: "Волосы", path: "/volosy" },
   { name: "Парфюмерия", path: "/parfjumerija" },
   { name: "Ногти", path: "/nogti" },
-  { name: "Красота", path: "/krasota" },
 ];
 
 function delay(ms: number): Promise<void> {
@@ -43,44 +41,168 @@ function randomDelay(minMs: number, maxMs: number): Promise<void> {
   return delay(ms);
 }
 
-function buildImageUrl(imageUrls: any[]): string {
-  if (!imageUrls?.length) return "";
-  const img = imageUrls[0];
-  if (!img?.url) return "";
-  return img.url
-    .replace("${screen}", "fullhd")
-    .replace("${format}", "webp");
+/** Try to extract products from __NEXT_DATA__ or similar embedded JSON */
+async function extractEmbeddedData(page: Page): Promise<any[]> {
+  return page.evaluate(() => {
+    // Try __NEXT_DATA__
+    const nextData = (window as any).__NEXT_DATA__;
+    if (nextData?.props?.pageProps?.products) {
+      return nextData.props.pageProps.products;
+    }
+    if (nextData?.props?.pageProps?.initialData?.products) {
+      return nextData.props.pageProps.initialData.products;
+    }
+
+    // Try script[type="application/json"] or script[id containing "data"]
+    const scripts = document.querySelectorAll('script[type="application/json"], script[id*="data"], script[id*="state"]');
+    for (const script of scripts) {
+      try {
+        const data = JSON.parse(script.textContent ?? "");
+        // Look for products array in any shape
+        if (Array.isArray(data?.products)) return data.products;
+        if (data?.data?.products) return data.data.products;
+        if (data?.pageProps?.products) return data.pageProps.products;
+      } catch { /* skip */ }
+    }
+
+    // Try window.__INITIAL_STATE__ or similar
+    for (const key of Object.keys(window)) {
+      if (key.startsWith("__") && key.includes("STATE") || key.includes("DATA") || key.includes("APOLLO")) {
+        try {
+          const val = (window as any)[key];
+          if (val?.products) return val.products;
+          if (val?.data?.products) return val.data.products;
+        } catch { /* skip */ }
+      }
+    }
+
+    return [];
+  });
 }
 
-function parseProduct(item: any, category: string, now: string): Product | null {
-  const price = item?.price;
-  if (!price) return null;
+/** Extract product data from DOM elements */
+async function extractFromDOM(page: Page, category: string, now: string): Promise<Product[]> {
+  return page.evaluate(({ category, now, siteUrl }) => {
+    const products: any[] = [];
 
-  const currentPrice = price.actual?.amount;
-  const oldPrice = price.old?.amount ?? price.regular?.amount;
+    // Common selectors for product cards
+    const selectors = [
+      '[data-test="product-card"]',
+      '[class*="product-card"]',
+      '[class*="ProductCard"]',
+      '[class*="catalog-card"]',
+      '[class*="CatalogCard"]',
+      'a[href*="/product/"]',
+      'a[href*="/p/"]',
+      '[itemtype="http://schema.org/Product"]',
+      '[class*="item-card"]',
+      '[class*="goods-card"]',
+    ];
 
-  if (!oldPrice || !currentPrice || oldPrice <= currentPrice || currentPrice <= 0) return null;
+    let cards: Element[] = [];
+    for (const sel of selectors) {
+      const found = document.querySelectorAll(sel);
+      if (found.length > 0) {
+        cards = Array.from(found);
+        console.log(`Found ${cards.length} cards with selector: ${sel}`);
+        break;
+      }
+    }
 
-  const discount = price.viewOptions?.discountPercent
-    ?? Math.round(((oldPrice - currentPrice) / oldPrice) * 100);
+    if (cards.length === 0) {
+      // Fallback: find all links that look like product links
+      const links = document.querySelectorAll('a[href]');
+      for (const link of links) {
+        const href = link.getAttribute("href") ?? "";
+        if (href.match(/\/(product|p|catalog)\/.+/i) && link.querySelector("img")) {
+          cards.push(link);
+        }
+      }
+    }
 
-  if (discount < 1) return null;
+    for (const card of cards) {
+      try {
+        const link = card.closest("a") ?? card.querySelector("a") ?? card;
+        const href = link.getAttribute("href") ?? "";
 
-  return {
-    id: item.itemId ?? item.id ?? "",
-    name: item.name ?? "",
-    brand: item.brand ?? "",
-    productType: item.productType ?? "",
-    price: currentPrice,
-    oldPrice,
-    discount,
-    imageUrl: buildImageUrl(item.imageUrls),
-    productUrl: item.url ? `${SITE_URL}${item.url}` : "",
-    category,
-    rating: item.reviews?.rating ?? 0,
-    reviewsCount: item.reviews?.reviewsCount ?? 0,
-    scrapedAt: now,
-  };
+        // Get name
+        const nameEl = card.querySelector('[class*="name"], [class*="Name"], [class*="title"], [class*="Title"], h3, h4, [data-test="product-name"]');
+        const name = nameEl?.textContent?.trim() ?? "";
+
+        // Get brand
+        const brandEl = card.querySelector('[class*="brand"], [class*="Brand"], [data-test="product-brand"]');
+        const brand = brandEl?.textContent?.trim() ?? "";
+
+        // Get prices - look for crossed-out (old) price and current price
+        const priceTexts: string[] = [];
+        const priceEls = card.querySelectorAll('[class*="price"], [class*="Price"], [class*="cost"], [class*="Cost"]');
+        for (const el of priceEls) {
+          const text = el.textContent?.trim();
+          if (text) priceTexts.push(text);
+        }
+
+        // Parse price values from text
+        function parsePrice(text: string): number {
+          const match = text.replace(/\s/g, "").match(/([\d.,]+)/);
+          if (!match) return 0;
+          return parseFloat(match[1].replace(",", "."));
+        }
+
+        // Try to find old price (with line-through or specific class)
+        const oldPriceEl = card.querySelector('[class*="old"], [class*="Old"], [class*="cross"], [class*="Cross"], [style*="line-through"], del, s');
+        const currentPriceEl = card.querySelector('[class*="current"], [class*="Current"], [class*="actual"], [class*="Actual"], [class*="sale"], [class*="Sale"]');
+
+        let oldPrice = oldPriceEl ? parsePrice(oldPriceEl.textContent ?? "") : 0;
+        let currentPrice = currentPriceEl ? parsePrice(currentPriceEl.textContent ?? "") : 0;
+
+        // If we couldn't find specific price elements, try to parse from generic price elements
+        if ((!oldPrice || !currentPrice) && priceTexts.length >= 2) {
+          const prices = priceTexts.map(parsePrice).filter(p => p > 0).sort((a, b) => a - b);
+          if (prices.length >= 2) {
+            currentPrice = prices[0];
+            oldPrice = prices[prices.length - 1];
+          }
+        }
+
+        // Skip if no discount
+        if (!oldPrice || !currentPrice || oldPrice <= currentPrice) continue;
+
+        const discount = Math.round(((oldPrice - currentPrice) / oldPrice) * 100);
+        if (discount < 1 || discount > 99) continue;
+
+        // Get image
+        const img = card.querySelector("img");
+        const imageUrl = img?.getAttribute("src") ?? img?.getAttribute("data-src") ?? "";
+
+        // Get rating
+        const ratingEl = card.querySelector('[class*="rating"], [class*="Rating"]');
+        const ratingText = ratingEl?.textContent?.trim() ?? "";
+        const ratingMatch = ratingText.match(/([\d.]+)/);
+        const rating = ratingMatch ? parseFloat(ratingMatch[1]) : 0;
+
+        const productUrl = href.startsWith("http") ? href : `${siteUrl}${href}`;
+        const id = href.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 50) || `prod-${products.length}`;
+
+        products.push({
+          id,
+          name: name || "Без названия",
+          brand,
+          productType: "",
+          price: currentPrice,
+          oldPrice,
+          discount,
+          imageUrl,
+          productUrl,
+          category,
+          rating,
+          reviewsCount: 0,
+          scrapedAt: now,
+        });
+      } catch { /* skip individual card errors */ }
+    }
+
+    return products;
+  }, { category, now, siteUrl: SITE_URL });
 }
 
 async function scrapeCategory(
@@ -90,84 +212,181 @@ async function scrapeCategory(
   seenIds: Set<string>,
 ): Promise<Product[]> {
   const now = new Date().toISOString();
-  const products: Product[] = [];
+  const allProducts: Product[] = [];
   const page = await context.newPage();
 
-  const interceptedProducts: any[] = [];
-
-  // Intercept API responses
+  // Log all API responses for debugging
+  const interceptedApiProducts: any[] = [];
   page.on("response", async (response) => {
     const url = response.url();
-    if (CATALOG_API_PATTERN.test(url) && response.status() === 200) {
+    if (url.includes("/api/") && url.includes("product") && response.status() === 200) {
       try {
         const json = await response.json();
         const items = json?.data?.products ?? json?.products ?? [];
-        interceptedProducts.push(...items);
-      } catch {
-        // ignore parse errors
-      }
+        if (items.length > 0) {
+          console.log(`  [API] Intercepted ${items.length} products from: ${url.substring(0, 120)}`);
+          interceptedApiProducts.push(...items);
+        }
+      } catch { /* not JSON */ }
     }
   });
 
   console.log(`\nСкрапинг категории: ${categoryName} (${categoryPath})...`);
 
   try {
-    // Navigate to category page
     await page.goto(`${SITE_URL}${categoryPath}`, {
-      waitUntil: "networkidle",
+      waitUntil: "domcontentloaded",
       timeout: 60000,
     });
 
-    // Wait for products to load
-    await delay(3000);
+    // Wait for page to fully load
+    await delay(5000);
 
-    // Try to scroll down to trigger more loads
-    const maxScrolls = 15;
-    for (let i = 0; i < maxScrolls; i++) {
-      const prevCount = interceptedProducts.length;
+    // Debug: log page title and URL
+    const title = await page.title();
+    const currentUrl = page.url();
+    console.log(`  Страница: "${title}" URL: ${currentUrl}`);
 
+    // Debug: check what's on the page
+    const pageInfo = await page.evaluate(() => {
+      const allLinks = document.querySelectorAll("a[href]");
+      const productLinks = Array.from(allLinks).filter(a => {
+        const href = a.getAttribute("href") ?? "";
+        return href.includes("/product") || href.includes("/p/");
+      });
+      const imgs = document.querySelectorAll("img");
+      const allClassNames = new Set<string>();
+      document.querySelectorAll("[class]").forEach(el => {
+        el.className.split(/\s+/).forEach(c => {
+          if (c.toLowerCase().includes("product") || c.toLowerCase().includes("card") || c.toLowerCase().includes("price") || c.toLowerCase().includes("catalog")) {
+            allClassNames.add(c);
+          }
+        });
+      });
+      return {
+        productLinksCount: productLinks.length,
+        imgCount: imgs.length,
+        relevantClasses: Array.from(allClassNames).slice(0, 30),
+        bodyTextLength: document.body?.textContent?.length ?? 0,
+      };
+    });
+    console.log(`  Найдено: ${pageInfo.productLinksCount} product links, ${pageInfo.imgCount} images`);
+    console.log(`  Relevant classes: ${pageInfo.relevantClasses.join(", ")}`);
+
+    // Try scrolling to load more products
+    for (let i = 0; i < 10; i++) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await delay(1500);
+      await delay(2000);
 
-      // Try clicking "show more" button if exists
+      // Try clicking "show more" or pagination
       try {
-        const showMoreBtn = await page.$('button:has-text("Показать ещё"), button:has-text("показать ещё"), [class*="more"], [class*="More"]');
-        if (showMoreBtn) {
-          await showMoreBtn.click();
-          await delay(2000);
+        const btn = await page.$('button:has-text("Показать ещё"), button:has-text("Загрузить ещё"), [class*="more"], [class*="load-more"], [class*="show-more"]');
+        if (btn && await btn.isVisible()) {
+          await btn.click();
+          console.log(`  Нажата кнопка "Показать ещё" (scroll ${i + 1})`);
+          await delay(3000);
         }
-      } catch {
-        // no button found
-      }
+      } catch { /* no button */ }
+    }
 
-      // Check if new products were loaded
-      if (interceptedProducts.length === prevCount && i > 2) {
-        console.log(`  Прокрутка ${i + 1}: нет новых товаров, стоп`);
-        break;
-      }
+    // Strategy 1: Try intercepted API data
+    if (interceptedApiProducts.length > 0) {
+      console.log(`  [API] Всего перехвачено: ${interceptedApiProducts.length}`);
+      for (const item of interceptedApiProducts) {
+        const price = item?.price;
+        if (!price) continue;
+        const currentPrice = price.actual?.amount;
+        const oldPrice = price.old?.amount;
+        if (!oldPrice || !currentPrice || oldPrice <= currentPrice) continue;
 
-      if (interceptedProducts.length > prevCount) {
-        console.log(`  Прокрутка ${i + 1}: перехвачено ${interceptedProducts.length} товаров`);
+        const discount = price.viewOptions?.discountPercent
+          ?? Math.round(((oldPrice - currentPrice) / oldPrice) * 100);
+        if (discount < 1) continue;
+
+        const id = item.itemId ?? item.id ?? "";
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+
+        const imageUrl = item.imageUrls?.[0]?.url
+          ?.replace("${screen}", "fullhd")
+          ?.replace("${format}", "webp") ?? "";
+
+        allProducts.push({
+          id,
+          name: item.name ?? "",
+          brand: item.brand ?? "",
+          productType: item.productType ?? "",
+          price: currentPrice,
+          oldPrice,
+          discount,
+          imageUrl,
+          productUrl: item.url ? `${SITE_URL}${item.url}` : "",
+          category: categoryName,
+          rating: item.reviews?.rating ?? 0,
+          reviewsCount: item.reviews?.reviewsCount ?? 0,
+          scrapedAt: now,
+        });
       }
     }
 
-    // Parse intercepted products
-    for (const item of interceptedProducts) {
-      const product = parseProduct(item, categoryName, now);
-      if (product && !seenIds.has(product.id)) {
-        seenIds.add(product.id);
-        products.push(product);
+    // Strategy 2: Try embedded JSON data
+    if (allProducts.length === 0) {
+      const embedded = await extractEmbeddedData(page);
+      if (embedded.length > 0) {
+        console.log(`  [Embedded] Найдено ${embedded.length} товаров`);
+        for (const item of embedded) {
+          const price = item?.price;
+          if (!price) continue;
+          const currentPrice = price.actual?.amount ?? item.price;
+          const oldPrice = price.old?.amount ?? item.oldPrice;
+          if (!oldPrice || !currentPrice || oldPrice <= currentPrice) continue;
+
+          const discount = Math.round(((oldPrice - currentPrice) / oldPrice) * 100);
+          if (discount < 1) continue;
+
+          const id = item.itemId ?? item.id ?? "";
+          if (seenIds.has(id)) continue;
+          seenIds.add(id);
+
+          allProducts.push({
+            id,
+            name: item.name ?? "",
+            brand: item.brand ?? "",
+            productType: item.productType ?? "",
+            price: currentPrice,
+            oldPrice,
+            discount,
+            imageUrl: item.imageUrls?.[0]?.url ?? item.imageUrl ?? "",
+            productUrl: item.url ? `${SITE_URL}${item.url}` : "",
+            category: categoryName,
+            rating: item.reviews?.rating ?? 0,
+            reviewsCount: item.reviews?.reviewsCount ?? 0,
+            scrapedAt: now,
+          });
+        }
       }
     }
 
-    console.log(`  Итого со скидкой в ${categoryName}: ${products.length}`);
+    // Strategy 3: DOM extraction as fallback
+    if (allProducts.length === 0) {
+      const domProducts = await extractFromDOM(page, categoryName, now);
+      console.log(`  [DOM] Извлечено ${domProducts.length} товаров со скидкой`);
+      for (const p of domProducts) {
+        if (!seenIds.has(p.id)) {
+          seenIds.add(p.id);
+          allProducts.push(p);
+        }
+      }
+    }
+
+    console.log(`  Итого со скидкой в ${categoryName}: ${allProducts.length}`);
   } catch (err) {
     console.error(`  Ошибка в категории ${categoryName}: ${err}`);
   } finally {
     await page.close();
   }
 
-  return products;
+  return allProducts;
 }
 
 export async function runScraper(): Promise<Product[]> {
@@ -195,6 +414,9 @@ export async function runScraper(): Promise<Product[]> {
       "Accept-Language": "ru-BY,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     },
   });
+
+  // Block unnecessary resources to speed up
+  await context.route(/\.(woff2?|ttf|otf|mp4|webm)$/, (route) => route.abort());
 
   const allProducts: Product[] = [];
   const seenIds = new Set<string>();
