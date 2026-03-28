@@ -2,7 +2,7 @@ import { readFile, stat } from "fs/promises";
 import { join } from "path";
 import { runScraper } from "./scraper/index";
 
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT ?? "3001", 10);
 const DATA_FILE = join(import.meta.dir, "data", "products.json");
 const WEB_DIR = join(import.meta.dir, "web");
 const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
