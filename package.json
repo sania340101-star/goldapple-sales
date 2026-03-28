@@ -1,0 +1,12 @@
+{
+  "name": "goldapple-sales",
+  "version": "1.0.0",
+  "description": "Парсер скидок Золотого Яблока с веб-интерфейсом",
+  "scripts": {
+    "start": "bun run server.ts",
+    "scrape": "bun run scraper/index.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.42.0"
+  }
+}

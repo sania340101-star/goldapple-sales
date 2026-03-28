@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Скидки Золотого Яблока</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div class="header-content">
+      <h1>Скидки Золотого Яблока</h1>
+      <div class="status-bar">
+        <span id="update-time">Загрузка...</span>
+        <span id="product-count"></span>
+        <button id="refresh-btn" title="Запустить обновление">Обновить данные</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="filters">
+      <input type="text" id="search" placeholder="Поиск по названию или бренду..." />
+      <select id="category-filter">
+        <option value="">Все категории</option>
+      </select>
+      <div class="range-group">
+        <label for="min-discount">Мин. скидка: <span id="discount-value">0</span>%</label>
+        <input type="range" id="min-discount" min="0" max="90" value="0" step="5" />
+      </div>
+      <select id="sort">
+        <option value="discount-desc">По скидке (макс.)</option>
+        <option value="price-asc">По цене (мин.)</option>
+        <option value="price-desc">По цене (макс.)</option>
+        <option value="name-asc">По названию</option>
+      </select>
+    </section>
+
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      <p>Загрузка товаров...</p>
+    </div>
+
+    <div id="empty-state" class="empty-state" style="display:none;">
+      <p>Товары со скидками не найдены. Попробуйте изменить фильтры или запустить обновление данных.</p>
+    </div>
+
+    <section id="products" class="products-grid"></section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
