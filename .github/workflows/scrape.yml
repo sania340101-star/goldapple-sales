@@ -23,13 +23,13 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Install Chrome and Playwright deps
+      - name: Install Chrome and browser deps
         run: |
-          # Install real Google Chrome (not Chromium)
+          # Install real Google Chrome + xvfb for headful mode
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable xvfb
-          # Also install Playwright system dependencies
-          bunx playwright install-deps chromium
+          # Install rebrowser-playwright browser and system deps
+          bunx rebrowser-playwright install chromium --with-deps
 
       - name: Run scraper with virtual display
         run: |

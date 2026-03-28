@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { chromium } from "rebrowser-playwright";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 
@@ -389,19 +389,19 @@ export async function runScraper(): Promise<Product[]> {
 
   await mkdir(DATA_DIR, { recursive: true });
 
-  // Use headful mode with xvfb in CI for better anti-detection
+  // rebrowser-playwright patches CDP detection automatically
   const isCI = process.env.CI === "true";
   console.log(`Environment: ${isCI ? "CI (GitHub Actions)" : "Local"}`);
 
   const browser = await chromium.launch({
-    headless: !isCI, // headful in CI (with xvfb), headless locally
-    channel: isCI ? "chrome" : undefined, // use real Chrome in CI
+    headless: false, // headful mode with xvfb in CI
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-blink-features=AutomationControlled",
       "--window-size=1920,1080",
+      "--start-maximized",
     ],
   });
 
