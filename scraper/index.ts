@@ -1,5 +1,5 @@
-import { chromium, type Page, type BrowserContext } from "playwright";
-import { mkdir, writeFile, readFile } from "fs/promises";
+import { chromium, type Page, type Browser } from "playwright";
+import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 
 const DATA_DIR = join(import.meta.dir, "..", "data");
@@ -34,49 +34,6 @@ function delay(ms: number): Promise<void> {
 function randomDelay(minMs: number, maxMs: number): Promise<void> {
   const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
   return delay(ms);
-}
-
-function extractProductsFromResponse(data: unknown, category: string): Product[] {
-  const products: Product[] = [];
-  const now = new Date().toISOString();
-
-  try {
-    const response = data as Record<string, unknown>;
-    const items = (response?.data as Record<string, unknown>)?.products as Array<Record<string, unknown>>
-      ?? (response as Record<string, unknown>)?.products as Array<Record<string, unknown>>
-      ?? [];
-
-    for (const item of items) {
-      const price = extractPrice(item.price ?? item.currentPrice);
-      const oldPrice = extractPrice(item.oldPrice ?? item.previousPrice ?? item.basePrice);
-
-      if (oldPrice > price && price > 0) {
-        const discount = Math.round(((oldPrice - price) / oldPrice) * 100);
-        const id = String(item.id ?? item.itemId ?? item.sku ?? `${category}-${products.length}`);
-        const name = String(item.name ?? item.title ?? "");
-        const brand = String(item.brand?.toString() ?? (item.brandInfo as Record<string, unknown>)?.name ?? "");
-        const imageUrl = extractImageUrl(item);
-        const productUrl = extractProductUrl(item, id);
-
-        products.push({
-          id,
-          name,
-          brand,
-          price,
-          oldPrice,
-          discount,
-          imageUrl,
-          productUrl,
-          category,
-          scrapedAt: now,
-        });
-      }
-    }
-  } catch (err) {
-    console.error(`  Error extracting products: ${err}`);
-  }
-
-  return products;
 }
 
 function extractPrice(value: unknown): number {
@@ -117,22 +74,74 @@ function extractProductUrl(item: Record<string, unknown>, id: string): string {
   return `https://goldapple.by/product/${id}`;
 }
 
+function extractProductsFromResponse(data: unknown, category: string): Product[] {
+  const products: Product[] = [];
+  const now = new Date().toISOString();
+
+  try {
+    const response = data as Record<string, unknown>;
+    const items =
+      ((response?.data as Record<string, unknown>)?.products as Array<Record<string, unknown>>) ??
+      ((response as Record<string, unknown>)?.products as Array<Record<string, unknown>>) ??
+      [];
+
+    for (const item of items) {
+      const price = extractPrice(item.price ?? item.currentPrice);
+      const oldPrice = extractPrice(item.oldPrice ?? item.previousPrice ?? item.basePrice);
+
+      if (oldPrice > price && price > 0) {
+        const discount = Math.round(((oldPrice - price) / oldPrice) * 100);
+        const id = String(item.id ?? item.itemId ?? item.sku ?? `${category}-${products.length}`);
+        const name = String(item.name ?? item.title ?? "");
+        const brand = String(
+          item.brand?.toString() ?? (item.brandInfo as Record<string, unknown>)?.name ?? ""
+        );
+        const imageUrl = extractImageUrl(item);
+        const productUrl = extractProductUrl(item, id);
+
+        products.push({
+          id,
+          name,
+          brand,
+          price,
+          oldPrice,
+          discount,
+          imageUrl,
+          productUrl,
+          category,
+          scrapedAt: now,
+        });
+      }
+    }
+  } catch (err) {
+    console.error(`  Error extracting products: ${err}`);
+  }
+
+  return products;
+}
+
 async function scrapeCategory(
-  context: BrowserContext,
+  browser: Browser,
   categorySlug: string,
   categoryName: string
 ): Promise<Product[]> {
   const allProducts: Product[] = [];
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    viewport: { width: 1920, height: 1080 },
+  });
   const page = await context.newPage();
 
   const interceptedData: Array<Record<string, unknown>> = [];
 
+  // Intercept API responses
   page.on("response", async (response) => {
     const url = response.url();
     if (
       url.includes("/api/catalog/products") ||
       url.includes("/api/catalogue/products") ||
-      url.includes("/front/api/") && url.includes("product")
+      (url.includes("/front/api/") && url.includes("product"))
     ) {
       try {
         const json = await response.json();
@@ -151,30 +160,28 @@ async function scrapeCategory(
 
     // Try to close cookie/popup banners
     try {
-      const closeButtons = page.locator('[class*="close"], [class*="dismiss"], [aria-label="Close"]');
-      const count = await closeButtons.count();
-      if (count > 0) {
-        await closeButtons.first().click({ timeout: 2000 });
+      const closeBtn = page.locator('[class*="close"], [class*="dismiss"], [aria-label="Close"]').first();
+      if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await closeBtn.click();
         await delay(500);
       }
     } catch {
       // No popup
     }
 
-    // Scroll down to trigger lazy loading of more products
-    const scrollIterations = 5;
-    for (let i = 0; i < scrollIterations; i++) {
+    // Scroll down to trigger lazy loading
+    for (let i = 0; i < 5; i++) {
       await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
       await randomDelay(2000, 4000);
     }
 
-    // Also try to find and click "show more" / "load more" buttons
+    // Try "load more" buttons
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const loadMore = page.locator(
-          'button:has-text("Показать ещё"), button:has-text("Показать еще"), button:has-text("Загрузить ещё"), [class*="load-more"], [class*="show-more"]'
-        );
-        if (await loadMore.isVisible({ timeout: 2000 })) {
+          'button:has-text("Показать ещё"), button:has-text("Показать еще"), [class*="load-more"], [class*="show-more"]'
+        ).first();
+        if (await loadMore.isVisible({ timeout: 2000 }).catch(() => false)) {
           await loadMore.click();
           await randomDelay(3000, 5000);
         } else {
@@ -191,7 +198,7 @@ async function scrapeCategory(
       allProducts.push(...products);
     }
 
-    // If no API data intercepted, fall back to scraping DOM
+    // If no API data intercepted, fall back to DOM scraping
     if (allProducts.length === 0) {
       console.log(`  No API data intercepted, trying DOM scraping...`);
       const domProducts = await scrapeDom(page, categoryName);
@@ -202,7 +209,7 @@ async function scrapeCategory(
   } catch (err) {
     console.error(`  Error scraping ${categoryName}: ${err}`);
   } finally {
-    await page.close();
+    await context.close();
   }
 
   return allProducts;
@@ -212,7 +219,7 @@ async function scrapeDom(page: Page, category: string): Promise<Product[]> {
   const now = new Date().toISOString();
 
   return page.evaluate(
-    ({ category, now }) => {
+    ({ category, now }: { category: string; now: string }) => {
       const products: Array<{
         id: string;
         name: string;
@@ -226,14 +233,13 @@ async function scrapeDom(page: Page, category: string): Promise<Product[]> {
         scrapedAt: string;
       }> = [];
 
-      // Try common product card selectors
       const cardSelectors = [
         '[data-testid="product-card"]',
         '[class*="ProductCard"]',
         '[class*="product-card"]',
         '[class*="catalog-item"]',
         'article[class*="product"]',
-        '.product-item',
+        ".product-item",
       ];
 
       let cards: NodeListOf<Element> | null = null;
@@ -256,7 +262,12 @@ async function scrapeDom(page: Page, category: string): Promise<Product[]> {
             if (!val) return;
 
             const classList = el.className.toLowerCase();
-            if (classList.includes("old") || classList.includes("prev") || classList.includes("crossed") || (el as HTMLElement).style?.textDecoration === "line-through") {
+            if (
+              classList.includes("old") ||
+              classList.includes("prev") ||
+              classList.includes("crossed") ||
+              (el as HTMLElement).style?.textDecoration === "line-through"
+            ) {
               oldPrice = val;
             } else {
               if (currentPrice === 0) currentPrice = val;
@@ -264,7 +275,9 @@ async function scrapeDom(page: Page, category: string): Promise<Product[]> {
           });
 
           if (oldPrice > currentPrice && currentPrice > 0) {
-            const nameEl = card.querySelector('[class*="name"], [class*="Name"], [class*="title"], h3, h4');
+            const nameEl = card.querySelector(
+              '[class*="name"], [class*="Name"], [class*="title"], h3, h4'
+            );
             const brandEl = card.querySelector('[class*="brand"], [class*="Brand"]');
             const imgEl = card.querySelector("img");
             const linkEl = card.querySelector("a[href]");
@@ -306,14 +319,9 @@ export async function runScraper(): Promise<Product[]> {
     args: [
       "--disable-blink-features=AutomationControlled",
       "--no-sandbox",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
     ],
-  });
-
-  const context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    viewport: { width: 1920, height: 1080 },
-    locale: "ru-RU",
   });
 
   const allProducts: Product[] = [];
@@ -322,7 +330,7 @@ export async function runScraper(): Promise<Product[]> {
   for (const cat of CATEGORIES) {
     console.log(`\nScraping category: ${cat.name} (${cat.slug})`);
     try {
-      const products = await scrapeCategory(context, cat.slug, cat.name);
+      const products = await scrapeCategory(browser, cat.slug, cat.name);
       for (const p of products) {
         if (!seenIds.has(p.id)) {
           seenIds.add(p.id);
