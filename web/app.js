@@ -1,4 +1,4 @@
-/** @type {Array<{id:string, name:string, brand:string, price:number, oldPrice:number, discount:number, imageUrl:string, productUrl:string, category:string, scrapedAt:string}>} */
+/** @type {Array<{id:string, name:string, brand:string, price:number, oldPrice:number, discount:number, imageUrl:string, productUrl:string, category:string, rating:number, reviewsCount:number, scrapedAt:string}>} */
 let allProducts = [];
 
 const searchInput = document.getElementById("search");
@@ -10,12 +10,12 @@ const productsGrid = document.getElementById("products");
 const loadingEl = document.getElementById("loading");
 const emptyStateEl = document.getElementById("empty-state");
 const updateTimeEl = document.getElementById("update-time");
-const productCountEl = document.getElementById("product-count");
-const refreshBtn = document.getElementById("refresh-btn");
 const totalCountEl = document.getElementById("total-count");
 const filteredCountEl = document.getElementById("filtered-count");
 const maxDiscountEl = document.getElementById("max-discount");
 const categoryCountEl = document.getElementById("category-count");
+const statsRow = document.getElementById("stats-row");
+const totalCountLabel = document.getElementById("total-count-label");
 
 function formatPrice(value) {
   return new Intl.NumberFormat("ru-BY", {
@@ -27,7 +27,7 @@ function formatPrice(value) {
 }
 
 function formatDate(isoString) {
-  if (!isoString) return "—";
+  if (!isoString) return "";
   const d = new Date(isoString);
   return d.toLocaleString("ru-RU", {
     day: "numeric",
@@ -51,12 +51,19 @@ function createProductCard(product) {
   card.target = "_blank";
   card.rel = "noopener noreferrer";
 
-  const imgSrc = product.imageUrl || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 260'%3E%3Crect fill='%23f5f5f5' width='200' height='260'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23ccc' font-size='14'%3EНет фото%3C/text%3E%3C/svg%3E";
+  const imgSrc = product.imageUrl || "";
+  const placeholderSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 400'%3E%3Crect fill='%23f7f7f7' width='300' height='400'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23ccc' font-size='14' font-family='sans-serif'%3E%D0%9D%D0%B5%D1%82%20%D1%84%D0%BE%D1%82%D0%BE%3C/text%3E%3C/svg%3E";
+
+  const ratingHtml = product.rating > 0
+    ? `<div class="product-rating"><span class="star">\u2605</span> ${product.rating.toFixed(1)}${product.reviewsCount ? ` (${product.reviewsCount})` : ""}</div>`
+    : "";
 
   card.innerHTML = `
     <div class="product-image">
-      <img src="${imgSrc}" alt="${escapeHtml(product.name)}" loading="lazy" onerror="this.src='data:image/svg+xml,%253Csvg xmlns=%2527http://www.w3.org/2000/svg%2527 viewBox=%25270 0 200 260%2527%253E%253Crect fill=%2527%2523f5f5f5%2527 width=%2527200%2527 height=%2527260%2527/%253E%253Ctext x=%252750%2525%2527 y=%252750%2525%2527 text-anchor=%2527middle%2527 dy=%2527.3em%2527 fill=%2527%2523ccc%2527 font-size=%252714%2527%253EНет фото%253C/text%253E%253C/svg%253E'" />
-      <span class="discount-badge">-${product.discount}%</span>
+      <img src="${imgSrc || placeholderSvg}" alt="${escapeHtml(product.name)}" loading="lazy" onerror="this.src='${placeholderSvg}'" />
+      <div class="badge-row">
+        <span class="discount-badge">&minus;${product.discount}%</span>
+      </div>
     </div>
     <div class="product-info">
       <span class="product-brand">${escapeHtml(product.brand)}</span>
@@ -66,6 +73,7 @@ function createProductCard(product) {
         <span class="price-current">${formatPrice(product.price)}</span>
         <span class="price-old">${formatPrice(product.oldPrice)}</span>
       </div>
+      ${ratingHtml}
     </div>
   `;
 
@@ -108,10 +116,10 @@ function renderProducts() {
   filteredCountEl.textContent = filtered.length;
 
   if (filtered.length === 0 && allProducts.length > 0) {
-    emptyStateEl.style.display = "block";
-    productsGrid.style.display = "none";
+    emptyStateEl.style.display = "flex";
     emptyStateEl.querySelector("h3").textContent = "Ничего не найдено";
     emptyStateEl.querySelector("p").textContent = "Попробуйте изменить фильтры.";
+    productsGrid.style.display = "none";
   } else {
     emptyStateEl.style.display = "none";
     productsGrid.style.display = "grid";
@@ -121,8 +129,6 @@ function renderProducts() {
     }
     productsGrid.appendChild(fragment);
   }
-
-  productCountEl.textContent = `${filtered.length} из ${allProducts.length}`;
 }
 
 function populateCategories() {
@@ -140,13 +146,24 @@ function populateCategories() {
 function updateStats() {
   totalCountEl.textContent = allProducts.length;
   filteredCountEl.textContent = allProducts.length;
+  totalCountLabel.textContent = `${allProducts.length} ${pluralize(allProducts.length, "товар", "товара", "товаров")}`;
 
   if (allProducts.length > 0) {
     const maxDisc = Math.max(...allProducts.map((p) => p.discount));
-    maxDiscountEl.textContent = `-${maxDisc}%`;
+    maxDiscountEl.textContent = `\u2212${maxDisc}%`;
+    statsRow.style.display = "flex";
   } else {
-    maxDiscountEl.textContent = "—";
+    maxDiscountEl.textContent = "\u2014";
   }
+}
+
+function pluralize(n, one, few, many) {
+  const abs = Math.abs(n) % 100;
+  const lastDigit = abs % 10;
+  if (abs > 10 && abs < 20) return many;
+  if (lastDigit > 1 && lastDigit < 5) return few;
+  if (lastDigit === 1) return one;
+  return many;
 }
 
 async function loadProducts() {
@@ -158,27 +175,23 @@ async function loadProducts() {
 
     if (allProducts.length === 0) {
       loadingEl.style.display = "none";
-      emptyStateEl.style.display = "block";
-      emptyStateEl.querySelector("h3").textContent = "Данные ещё не загружены";
-      emptyStateEl.querySelector("p").textContent =
-        "Парсер обновляет данные ежедневно в 9:00 МСК. Первая загрузка может занять некоторое время.";
-      updateTimeEl.textContent = "Ожидание данных...";
+      emptyStateEl.style.display = "flex";
+      updateTimeEl.textContent = "Ожидание данных";
       return;
     }
 
     const lastUpdate = allProducts[0].scrapedAt;
     updateTimeEl.textContent = lastUpdate
-      ? `Обновлено: ${formatDate(lastUpdate)}`
-      : "—";
+      ? `Обновлено ${formatDate(lastUpdate)}`
+      : "";
 
     updateStats();
     populateCategories();
     renderProducts();
   } catch (err) {
-    emptyStateEl.style.display = "block";
+    emptyStateEl.style.display = "flex";
     emptyStateEl.querySelector("h3").textContent = "Ошибка загрузки";
-    emptyStateEl.querySelector("p").textContent =
-      "Не удалось загрузить данные. Попробуйте обновить страницу.";
+    emptyStateEl.querySelector("p").textContent = "Не удалось загрузить данные. Попробуйте обновить страницу.";
   } finally {
     loadingEl.style.display = "none";
   }
@@ -192,7 +205,6 @@ minDiscountInput.addEventListener("input", () => {
   discountValueLabel.textContent = minDiscountInput.value;
   renderProducts();
 });
-refreshBtn.addEventListener("click", () => location.reload());
 
 // Initial load
 loadProducts();
