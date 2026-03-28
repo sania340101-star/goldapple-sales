@@ -16,6 +16,11 @@ const maxDiscountEl = document.getElementById("max-discount");
 const categoryCountEl = document.getElementById("category-count");
 const statsRow = document.getElementById("stats-row");
 const totalCountLabel = document.getElementById("total-count-label");
+const progressContainer = document.getElementById("progress-container");
+const progressBar = document.getElementById("progress-bar");
+const progressText = document.getElementById("progress-text");
+
+const CHUNK_SIZE = 40;
 
 function formatPrice(value) {
   return new Intl.NumberFormat("ru-BY", {
@@ -109,6 +114,7 @@ function getFilteredProducts() {
   return filtered;
 }
 
+/** Render products in chunks with progress animation */
 function renderProducts() {
   const filtered = getFilteredProducts();
   productsGrid.innerHTML = "";
@@ -120,15 +126,52 @@ function renderProducts() {
     emptyStateEl.querySelector("h3").textContent = "Ничего не найдено";
     emptyStateEl.querySelector("p").textContent = "Попробуйте изменить фильтры.";
     productsGrid.style.display = "none";
-  } else {
-    emptyStateEl.style.display = "none";
-    productsGrid.style.display = "grid";
+    progressContainer.style.display = "none";
+    return;
+  }
+
+  emptyStateEl.style.display = "none";
+  productsGrid.style.display = "grid";
+
+  if (filtered.length <= CHUNK_SIZE) {
+    // Small dataset — render immediately
+    progressContainer.style.display = "none";
     const fragment = document.createDocumentFragment();
     for (const p of filtered) {
       fragment.appendChild(createProductCard(p));
     }
     productsGrid.appendChild(fragment);
+    return;
   }
+
+  // Large dataset — render in chunks with progress
+  progressContainer.style.display = "block";
+  let rendered = 0;
+
+  function renderNextChunk() {
+    const chunk = filtered.slice(rendered, rendered + CHUNK_SIZE);
+    const fragment = document.createDocumentFragment();
+    for (const p of chunk) {
+      fragment.appendChild(createProductCard(p));
+    }
+    productsGrid.appendChild(fragment);
+
+    rendered += chunk.length;
+    const pct = Math.round((rendered / filtered.length) * 100);
+    progressBar.style.width = pct + "%";
+    progressText.textContent = `Загружено ${rendered} из ${filtered.length} товаров`;
+
+    if (rendered < filtered.length) {
+      requestAnimationFrame(renderNextChunk);
+    } else {
+      // Hide progress after a short delay
+      setTimeout(() => {
+        progressContainer.style.display = "none";
+      }, 600);
+    }
+  }
+
+  renderNextChunk();
 }
 
 function populateCategories() {
@@ -168,6 +211,9 @@ function pluralize(n, one, few, many) {
 
 async function loadProducts() {
   try {
+    loadingEl.style.display = "flex";
+    emptyStateEl.style.display = "none";
+
     const resp = await fetch("./data/products.json");
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const raw = await resp.json();
@@ -180,6 +226,8 @@ async function loadProducts() {
       return;
     }
 
+    loadingEl.style.display = "none";
+
     const lastUpdate = allProducts[0].scrapedAt;
     updateTimeEl.textContent = lastUpdate
       ? `Обновлено ${formatDate(lastUpdate)}`
@@ -189,11 +237,10 @@ async function loadProducts() {
     populateCategories();
     renderProducts();
   } catch (err) {
+    loadingEl.style.display = "none";
     emptyStateEl.style.display = "flex";
     emptyStateEl.querySelector("h3").textContent = "Ошибка загрузки";
     emptyStateEl.querySelector("p").textContent = "Не удалось загрузить данные. Попробуйте обновить страницу.";
-  } finally {
-    loadingEl.style.display = "none";
   }
 }
 

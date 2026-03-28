@@ -276,6 +276,38 @@ h1 {
   color: var(--sale);
 }
 
+/* ===== PROGRESS BAR ===== */
+.progress-container {
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-track {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--sale);
+  border-radius: 2px;
+  transition: width 0.15s ease-out;
+}
+
+.progress-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 180px;
+  text-align: right;
+}
+
 /* ===== PRODUCTS GRID ===== */
 .products-grid {
   display: grid;
