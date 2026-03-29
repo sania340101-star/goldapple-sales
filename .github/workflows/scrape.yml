@@ -23,17 +23,13 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Install Chrome and browser deps
-        run: |
-          # Install real Google Chrome + xvfb for headful mode
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable xvfb
-          # Install rebrowser-playwright browser and system deps
-          bunx rebrowser-playwright install chromium --with-deps
+      - name: Install Playwright Chromium
+        run: bunx playwright install chromium --with-deps
 
       - name: Run scraper with virtual display
         run: |
           # Use xvfb to provide a virtual display for headful Chrome
+          sudo apt-get install -y xvfb
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             bun run scrape
         timeout-minutes: 30

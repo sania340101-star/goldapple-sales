@@ -7,7 +7,10 @@
     "scrape": "bun run scraper/index.ts"
   },
   "dependencies": {
+    "is-buffer": "^2.0.5",
     "playwright": "^1.50.0",
-    "rebrowser-playwright": "^1.52.0"
+    "puppeteer": "^24.40.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }

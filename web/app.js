@@ -23,11 +23,11 @@ const progressText = document.getElementById("progress-text");
 const CHUNK_SIZE = 20;
 
 function formatPrice(value) {
-  return new Intl.NumberFormat("ru-BY", {
+  return new Intl.NumberFormat("ru-RU", {
     style: "currency",
-    currency: "BYN",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    currency: "RUB",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   }).format(value);
 }
 
