@@ -25,7 +25,7 @@ const CHUNK_SIZE = 20;
 function formatPrice(value) {
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
-    currency: "RUB",
+    currency: "BYN",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(value);
